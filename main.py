@@ -1,74 +1,96 @@
 import requests
 import pprint
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton, InlineQueryResultArticle, ParseMode, InputTextMessageContent
-from telegram.ext import (Updater, MessageHandler, Filters, CommandHandler, InlineQueryHandler,
-						  ConversationHandler, RegexHandler, CallbackQueryHandler)
+from telegram.ext import (Updater, MessageHandler, Filters, CommandHandler, InlineQueryHandler, ConversationHandler, RegexHandler, CallbackQueryHandler)
 import logging
 import qbittorrentapi
 import time
 
-pp = pprint.PrettyPrinter(indent=4)
+class qbt_search():
+        
+    def __init__(self, search_term):
+
+        self.qbt_client = qbittorrentapi.Client(host='', username='', password='')
+
+        try:
+            self.qbt_client.auth_log_in()
+        except qbittorrentapi.LoginFailed as e:
+            print(e)
+        
+        self.search_job = self.qbt_client.search_start(pattern=search_term, category='all', plugins='all')
+        
+        while (self.search_job.status()[0].status != 'Stopped'):
+            time.sleep(.1)
+
+        self.search_result = self.qbt_client.search_results(id=self.search_job.id, limit = 3, offset = 1)
+        
+        self.magnet_list = [result.fileUrl for result in self.search_result.results] 
 
 #Bot functions
 def start(bot, update):
-	bot.send_message('Hi, this is a bot to search for torrents. Use /search <name>.')
+    bot.send_message('Hi, this is a bot to search for torrents. Use /search <name>.')
 
 def search(bot, update):
 
-	msg = update.message
-	chat_id = msg.chat_id
+    msg = update.message
+    chat_id = msg.chat_id
 
-	text = msg.text.split(' ')
-	search = text[1]
-	print(search)
+    text = msg.text.split(' ')
+    search = " "
+    search = search.join(text[1:])
 
-	qbt_client = qbittorrentapi.Client(host='8080', username='admin', password='adminadmin')
+    message_info = bot.send_message(chat_id=chat_id, text="Fetching results...")
+    message_id = message_info['message_id']
 
-	try:
-	    qbt_client.auth_log_in()
-	except qbittorrentapi.LoginFailed as e:
-	    print(e)
+    search_obj = qbt_search(search)
 
-	search_job = qbt_client.search.start(pattern=text, category='all', plugins='all')
+    title = ''
 
-	while (search_job.status()[0].status != 'Stopped'):
-	    time.sleep(.1)
+    for result in search_obj.search_result.results:
+        title = title + f"*Name:* _{result.fileName}_\n*Seeders:* _{result.nbSeeders}_\n*Size:* _{round(result.fileSize/(1024*1024*1024),2)} GB_\n\n"
 
-	search_result = qbt_client.search_results(id=search_job.id, limit = 3, offset = 1)
+    keyboard = [[InlineKeyboardButton(text="Magnet 1", callback_data=f'{search}|0|{message_id}')],
+                [InlineKeyboardButton(text="Magnet 2", callback_data=f'{search}|1|{message_id}')],
+                [InlineKeyboardButton(text="Magnet 3", callback_data=f'{search}|2|{message_id}')]]
 
-	magnet_list =[]
-	title = ''
+    kb_markup = InlineKeyboardMarkup(keyboard)
+    try:
+        bot.edit_message_text(message_id = message_id, chat_id=chat_id, text=title, reply_markup=kb_markup, parse_mode = 'markdown')
+    except: 
+        bot.edit_message_text(message_id = message_id, chat_id=chat_id, text="No results found")
 
-	for result in search_result.results:
-	    i = result.fileUrl.index('&')
-	    title = title + f"Name: {result.fileName}\nSeeders: {result.nbSeeders}\nSize: {result.fileSize}\n\n"
-	    magnet_list.append(f"\nMagnet: {result.fileUrl[:i]}")
+def button(bot, update):
+    
+    query = update.callback_query
+    query.answer()
 
-	keyboard = [[InlineKeyboardButton("Magnet 1", url = magnet_list[0])]
-	                 [InlineKeyboardButton("Magnet 2",  url = magnet_list[1])]
+    data = query.data.split('|')
 
-	                [InlineKeyboardButton("Magnet 3", url = magnet_list[2])]]
+    search = data[0]
+    index = int(data[1])
+    message_id = data[2]
+    
+    query.bot.edit_message_text(message_id = message_id, chat_id=query.message.chat_id, text="sending magnet")
 
-	reply_markup = InlineKeyboardMarkup(keyboard)
-	bot.send_message(chat_id = update.message.chat_id, text = title, markup = reply_markup)
-
-
+    search_obj = qbt_search(search)
+    
+    query.bot.edit_message_text(message_id = message_id, chat_id=query.message.chat_id, text=f'```{search_obj.magnet_list[index]}```', parse_mode = 'markdown')
 
 def main():
 
-	logging.basicConfig(level=logging.INFO,
-	                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-	updater = Updater(token="1128514006:AAHVDTxMv_mWqnZzghzPWfGxHwiSVOKfgY8")
+    updater = Updater(token="")
 
-	dispatcher = updater.dispatcher
+    dispatcher = updater.dispatcher
 
-	search_handler = CommandHandler('search', search)
+    search_handler = CommandHandler('search', search)
+    dispatcher.add_handler(CallbackQueryHandler(button))
 
-	dispatcher.add_handler(search_handler)
+    dispatcher.add_handler(search_handler)
 
-	updater.start_polling()
-	updater.idle()
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
     main()
